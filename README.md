@@ -1,6 +1,10 @@
 # Kaze
 
-A macOS menu bar app for system-wide voice-to-text dictation. Hold a global hotkey, speak, and the transcribed text is automatically pasted into whatever app you're using.
+Hold a global hotkey, speak, and the transcribed text is automatically pasted into whatever app you're using.
+
+
+https://github.com/user-attachments/assets/8fde004a-e07a-45fc-ae3c-8f8a216873d3
+
 
 ## How it works
 
