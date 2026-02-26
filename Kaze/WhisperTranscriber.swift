@@ -219,6 +219,9 @@ class WhisperTranscriber: ObservableObject, TranscriberProtocol {
 
     var onTranscriptionFinished: ((String) -> Void)?
 
+    /// Custom words to bias recognition toward (names, abbreviations, etc.)
+    var customWords: [String] = []
+
     private let audioEngine = AVAudioEngine()
     private var audioBuffer: [Float] = []
     private let modelManager: WhisperModelManager
@@ -316,7 +319,15 @@ class WhisperTranscriber: ObservableObject, TranscriberProtocol {
                 audioForWhisper = samples
             }
 
-            let results: [TranscriptionResult] = try await kit.transcribe(audioArray: audioForWhisper)
+            // Build decoding options with custom vocabulary as initial prompt
+            var decodeOptions = DecodingOptions()
+            if !customWords.isEmpty, let tokenizer = kit.tokenizer {
+                let prompt = customWords.joined(separator: ", ")
+                let promptTokens = tokenizer.encode(text: prompt)
+                decodeOptions.promptTokens = promptTokens
+            }
+
+            let results: [TranscriptionResult] = try await kit.transcribe(audioArray: audioForWhisper, decodeOptions: decodeOptions)
             let text = results.compactMap { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
 
             transcribedText = text

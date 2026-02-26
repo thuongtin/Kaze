@@ -20,6 +20,9 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
 
     var onTranscriptionFinished: ((String) -> Void)?
 
+    /// Custom words to hint the recognizer toward (names, abbreviations, etc.)
+    var customWords: [String] = []
+
     init() {
         speechRecognizer = SFSpeechRecognizer(locale: Locale.current)
     }
@@ -118,6 +121,9 @@ class SpeechTranscriber: ObservableObject, TranscriberProtocol {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
+        if !customWords.isEmpty {
+            request.contextualStrings = customWords
+        }
         recognitionRequest = request
 
         let inputNode = audioEngine.inputNode

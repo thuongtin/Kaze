@@ -4,11 +4,13 @@ import SwiftUI
 
 private enum SettingsTab: String, CaseIterable {
     case general
+    case vocabulary
     case history
 
     var title: String {
         switch self {
         case .general: return "General"
+        case .vocabulary: return "Vocabulary"
         case .history: return "History"
         }
     }
@@ -16,6 +18,7 @@ private enum SettingsTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .general: return "gearshape"
+        case .vocabulary: return "text.book.closed"
         case .history: return "clock.arrow.circlepath"
         }
     }
@@ -26,6 +29,7 @@ private enum SettingsTab: String, CaseIterable {
 struct ContentView: View {
     @ObservedObject var whisperModelManager: WhisperModelManager
     @ObservedObject var historyManager: TranscriptionHistoryManager
+    @ObservedObject var customWordsManager: CustomWordsManager
 
     @State private var selectedTab: SettingsTab = .general
 
@@ -41,6 +45,8 @@ struct ContentView: View {
                 switch selectedTab {
                 case .general:
                     GeneralSettingsView(whisperModelManager: whisperModelManager)
+                case .vocabulary:
+                    VocabularySettingsView(customWordsManager: customWordsManager)
                 case .history:
                     HistorySettingsView(historyManager: historyManager)
                 }
@@ -439,6 +445,112 @@ private struct HistorySettingsView: View {
             }
             .buttonStyle(.borderless)
             .help("Copy to clipboard")
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Vocabulary Tab
+
+private struct VocabularySettingsView: View {
+    @ObservedObject var customWordsManager: CustomWordsManager
+    @State private var newWord: String = ""
+    @FocusState private var isInputFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Add word input
+            HStack(spacing: 8) {
+                TextField("Add a new word or phrase", text: $newWord)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isInputFocused)
+                    .onSubmit {
+                        addCurrentWord()
+                    }
+
+                Button("Add") {
+                    addCurrentWord()
+                }
+                .controlSize(.small)
+                .disabled(newWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.return, modifiers: .command)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            Divider()
+
+            if customWordsManager.words.isEmpty {
+                Spacer()
+                VStack(spacing: 8) {
+                    Image(systemName: "text.book.closed")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.quaternary)
+                    Text("No custom words yet")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    Text("Add names, abbreviations, and specialised terms.\nKaze will recognise them during transcription.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 20)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(customWordsManager.words.enumerated()), id: \.offset) { index, word in
+                            wordRow(word, at: index)
+
+                            if index < customWordsManager.words.count - 1 {
+                                Divider()
+                                    .padding(.leading, 16)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                }
+
+                Divider()
+
+                // Footer
+                HStack {
+                    Text("\(customWordsManager.words.count) word\(customWordsManager.words.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func addCurrentWord() {
+        let trimmed = newWord.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        customWordsManager.addWord(trimmed)
+        newWord = ""
+        isInputFocused = true
+    }
+
+    private func wordRow(_ word: String, at index: Int) -> some View {
+        HStack {
+            Text(word)
+                .font(.system(size: 13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                customWordsManager.removeWord(at: index)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove word")
         }
         .padding(.vertical, 8)
     }

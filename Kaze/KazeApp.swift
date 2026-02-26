@@ -79,7 +79,7 @@ struct KazeApp: App {
 
     var body: some Scene {
         Settings {
-            ContentView(whisperModelManager: appDelegate.whisperModelManager, historyManager: appDelegate.historyManager)
+            ContentView(whisperModelManager: appDelegate.whisperModelManager, historyManager: appDelegate.historyManager, customWordsManager: appDelegate.customWordsManager)
                 .frame(minWidth: 480, maxWidth: 520)
         }
     }
@@ -93,6 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var whisperTranscriber: WhisperTranscriber?
     let whisperModelManager = WhisperModelManager()
     let historyManager = TranscriptionHistoryManager()
+    let customWordsManager = CustomWordsManager()
 
     private let hotkeyManager = HotkeyManager()
     private let overlayWindow = RecordingOverlayWindow()
@@ -209,7 +210,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let contentView = ContentView(whisperModelManager: whisperModelManager, historyManager: historyManager)
+        let contentView = ContentView(whisperModelManager: whisperModelManager, historyManager: historyManager, customWordsManager: customWordsManager)
             .frame(minWidth: 480, maxWidth: 520)
         let hostingController = NSHostingController(rootView: contentView)
 
@@ -271,10 +272,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         isSessionActive = true
 
+        // Pass current custom words to the transcriber
+        let words = customWordsManager.words
+
         // Use the appropriate transcriber
         if transcriptionEngine == .whisper, isWhisperReady {
             let whisper = whisperTranscriber ?? WhisperTranscriber(modelManager: whisperModelManager)
             whisperTranscriber = whisper
+            whisper.customWords = words
             whisper.onTranscriptionFinished = { [weak self] (text: String) in
                 guard let self else { return }
                 self.processTranscription(text)
@@ -283,6 +288,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             overlayWindow.show(state: overlayState)
             whisper.startRecording()
         } else {
+            speechTranscriber.customWords = words
             speechTranscriber.onTranscriptionFinished = { [weak self] (text: String) in
                 guard let self else { return }
                 self.processTranscription(text)
@@ -355,8 +361,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 do {
                     if #available(macOS 26.0, *) {
-                        let prompt = UserDefaults.standard.string(forKey: AppPreferenceKey.enhancementSystemPrompt)
+                        var prompt = UserDefaults.standard.string(forKey: AppPreferenceKey.enhancementSystemPrompt)
                             ?? AppPreferenceKey.defaultEnhancementPrompt
+                        // Inject custom vocabulary so the enhancer preserves these terms
+                        let words = self.customWordsManager.words
+                        if !words.isEmpty {
+                            prompt += "\n\nIMPORTANT: The following are custom words, names, or abbreviations the user has defined. Always preserve their exact spelling and casing: \(words.joined(separator: ", "))."
+                        }
                         let enhanced = try await enhancer.enhance(rawText, systemPrompt: prompt)
                         self.typeText(enhanced)
                         self.historyManager.addRecord(
