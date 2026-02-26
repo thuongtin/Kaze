@@ -22,6 +22,27 @@ enum TranscriptionEngine: String, CaseIterable, Identifiable {
     }
 }
 
+enum HotkeyMode: String, CaseIterable, Identifiable {
+    case holdToTalk
+    case toggle
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .holdToTalk: return "Hold to Talk"
+        case .toggle: return "Press to Toggle"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .holdToTalk: return "Hold the hotkey to record, release to stop."
+        case .toggle: return "Press the hotkey once to start, press again to stop."
+        }
+    }
+}
+
 enum EnhancementMode: String, CaseIterable, Identifiable {
     case off
     case appleIntelligence
@@ -40,6 +61,8 @@ enum AppPreferenceKey {
     static let transcriptionEngine = "transcriptionEngine"
     static let enhancementMode = "enhancementMode"
     static let enhancementSystemPrompt = "enhancementSystemPrompt"
+    static let hotkeyMode = "hotkeyMode"
+    static let whisperModelVariant = "whisperModelVariant"
 
     static let defaultEnhancementPrompt = """
         You are Kaze, a speech-to-text transcription assistant. Your only job is to \
@@ -56,9 +79,8 @@ struct KazeApp: App {
 
     var body: some Scene {
         Settings {
-            ContentView(whisperModelManager: appDelegate.whisperModelManager)
-                .frame(width: 460)
-                .padding()
+            ContentView(whisperModelManager: appDelegate.whisperModelManager, historyManager: appDelegate.historyManager)
+                .frame(minWidth: 480, maxWidth: 520)
         }
     }
 }
@@ -70,6 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let speechTranscriber = SpeechTranscriber()
     private var whisperTranscriber: WhisperTranscriber?
     let whisperModelManager = WhisperModelManager()
+    let historyManager = TranscriptionHistoryManager()
 
     private let hotkeyManager = HotkeyManager()
     private let overlayWindow = RecordingOverlayWindow()
@@ -99,6 +122,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var hotkeyMode: HotkeyMode {
+        get {
+            let raw = UserDefaults.standard.string(forKey: AppPreferenceKey.hotkeyMode)
+            return HotkeyMode(rawValue: raw ?? "") ?? .holdToTalk
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: AppPreferenceKey.hotkeyMode)
+        }
+    }
+
+    private var hotkeyModeObserver: NSObjectProtocol?
     private var isSessionActive = false
 
     /// Returns the currently active transcriber based on the user's engine preference.
@@ -175,17 +209,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let contentView = ContentView(whisperModelManager: whisperModelManager)
-            .frame(width: 460)
-            .padding()
+        let contentView = ContentView(whisperModelManager: whisperModelManager, historyManager: historyManager)
+            .frame(minWidth: 480, maxWidth: 520)
         let hostingController = NSHostingController(rootView: contentView)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.minSize = NSSize(width: 500, height: 400)
         window.center()
         window.title = "Kaze Settings"
         window.contentViewController = hostingController
@@ -198,6 +232,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupHotkey() {
+        hotkeyManager.mode = hotkeyMode
         hotkeyManager.onKeyDown = { [weak self] in
             self?.beginRecording()
         }
@@ -207,6 +242,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let started = hotkeyManager.start()
         if !started {
             showAccessibilityPermissionAlert()
+        }
+
+        // Observe changes to hotkey mode preference so it updates at runtime
+        hotkeyModeObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.hotkeyManager.mode = self.hotkeyMode
         }
     }
 
@@ -288,6 +333,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let engine = transcriptionEngine
+
         if enhancementMode == .appleIntelligence, let enhancer {
             overlayState.isEnhancing = true
             if transcriptionEngine == .whisper {
@@ -312,16 +359,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             ?? AppPreferenceKey.defaultEnhancementPrompt
                         let enhanced = try await enhancer.enhance(rawText, systemPrompt: prompt)
                         self.typeText(enhanced)
+                        self.historyManager.addRecord(
+                            TranscriptionRecord(text: enhanced, engine: engine, wasEnhanced: true)
+                        )
                     } else {
                         self.typeText(rawText)
+                        self.historyManager.addRecord(
+                            TranscriptionRecord(text: rawText, engine: engine, wasEnhanced: false)
+                        )
                     }
                 } catch {
                     print("AI enhancement failed, using raw text: \(error)")
                     self.typeText(rawText)
+                    self.historyManager.addRecord(
+                        TranscriptionRecord(text: rawText, engine: engine, wasEnhanced: false)
+                    )
                 }
             }
         } else {
             typeText(rawText)
+            historyManager.addRecord(
+                TranscriptionRecord(text: rawText, engine: engine, wasEnhanced: false)
+            )
             overlayWindow.hide()
             isSessionActive = false
         }

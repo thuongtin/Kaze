@@ -3,16 +3,23 @@ import Carbon
 import AppKit
 
 /// Monitors the global Option+Command (⌥⌘) hotkey via a CGEvent tap.
-/// - Press and hold both keys  → calls `onKeyDown`
-/// - Release either key        → calls `onKeyUp`
+/// Supports two modes:
+/// - **Hold to Talk**: Press and hold both keys → `onKeyDown`; release either → `onKeyUp`
+/// - **Toggle**: First press of combo → `onKeyDown`; second press → `onKeyUp`
 @MainActor
 class HotkeyManager {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
 
+    /// The current hotkey mode. Can be changed at runtime.
+    var mode: HotkeyMode = .holdToTalk
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isKeyDown = false
+
+    /// Tracks whether a toggle session is active (only used in toggle mode).
+    private var isToggleActive = false
 
     // We track flags-changed events and require both Option and Command.
     private let optionFlagMask: CGEventFlags = .maskAlternate
@@ -78,12 +85,33 @@ class HotkeyManager {
         let commandIsDown = flags.contains(commandFlagMask)
         let comboIsDown = optionIsDown && commandIsDown
 
-        if comboIsDown && !isKeyDown {
-            isKeyDown = true
-            Task { @MainActor in self.onKeyDown?() }
-        } else if !comboIsDown && isKeyDown {
-            isKeyDown = false
-            Task { @MainActor in self.onKeyUp?() }
+        switch mode {
+        case .holdToTalk:
+            if comboIsDown && !isKeyDown {
+                isKeyDown = true
+                Task { @MainActor in self.onKeyDown?() }
+            } else if !comboIsDown && isKeyDown {
+                isKeyDown = false
+                Task { @MainActor in self.onKeyUp?() }
+            }
+
+        case .toggle:
+            // Detect the rising edge: combo was not pressed, now it is
+            if comboIsDown && !isKeyDown {
+                isKeyDown = true
+                if !isToggleActive {
+                    // First press: start recording
+                    isToggleActive = true
+                    Task { @MainActor in self.onKeyDown?() }
+                } else {
+                    // Second press: stop recording
+                    isToggleActive = false
+                    Task { @MainActor in self.onKeyUp?() }
+                }
+            } else if !comboIsDown && isKeyDown {
+                // Keys released — just reset the edge detector, don't fire callbacks
+                isKeyDown = false
+            }
         }
     }
 }

@@ -3,7 +3,58 @@ import AVFoundation
 import Combine
 import WhisperKit
 
+// MARK: - Whisper Model Variant
+
+enum WhisperModelVariant: String, CaseIterable, Identifiable {
+    case tiny
+    case base
+    case small
+    case largev3turbo
+
+    var id: String { rawValue }
+
+    /// The variant string WhisperKit expects for download.
+    var whisperKitVariant: String {
+        switch self {
+        case .tiny: return "tiny"
+        case .base: return "base"
+        case .small: return "small"
+        case .largev3turbo: return "large-v3-turbo"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .tiny: return "Tiny"
+        case .base: return "Base"
+        case .small: return "Small"
+        case .largev3turbo: return "Large v3 Turbo"
+        }
+    }
+
+    var sizeDescription: String {
+        switch self {
+        case .tiny: return "~75 MB"
+        case .base: return "~142 MB"
+        case .small: return "~466 MB"
+        case .largev3turbo: return "~1.5 GB"
+        }
+    }
+
+    var qualityDescription: String {
+        switch self {
+        case .tiny: return "Fastest, good for quick notes"
+        case .base: return "Balanced speed and accuracy"
+        case .small: return "High accuracy, moderate speed"
+        case .largev3turbo: return "Best accuracy, requires more memory"
+        }
+    }
+}
+
+// MARK: - WhisperModelManager
+
 /// Manages Whisper model download state, exposed to the settings UI.
+/// Supports multiple model variants with per-variant storage.
 @MainActor
 class WhisperModelManager: ObservableObject {
     enum ModelState: Equatable {
@@ -16,27 +67,41 @@ class WhisperModelManager: ObservableObject {
     }
 
     @Published var state: ModelState = .notDownloaded
+    @Published var selectedVariant: WhisperModelVariant {
+        didSet {
+            guard oldValue != selectedVariant else { return }
+            UserDefaults.standard.set(selectedVariant.rawValue, forKey: AppPreferenceKey.whisperModelVariant)
+            // When switching variants, invalidate the current WhisperKit instance
+            whisperKit = nil
+            checkExistingModel()
+        }
+    }
 
-    /// Path where models are stored in Application Support.
-    static var modelDirectory: URL {
+    /// Root path where all models are stored in Application Support.
+    static var modelsRootDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("com.fayazahmed.Kaze/WhisperModels", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    /// The variant to download. "tiny" is ~75MB and fast on all Apple Silicon.
-    static let modelVariant = "tiny"
+    /// Per-variant download directory to avoid collisions between models.
+    var modelDirectory: URL {
+        let dir = Self.modelsRootDirectory.appendingPathComponent(selectedVariant.rawValue, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 
     private var whisperKit: WhisperKit?
 
     init() {
-        // Check if model is already downloaded
+        let raw = UserDefaults.standard.string(forKey: AppPreferenceKey.whisperModelVariant)
+        self.selectedVariant = WhisperModelVariant(rawValue: raw ?? "") ?? .tiny
         checkExistingModel()
     }
 
     func checkExistingModel() {
-        let modelDir = Self.modelDirectory
+        let modelDir = modelDirectory
         let fm = FileManager.default
 
         // Look for any subfolder that contains the model files
@@ -57,7 +122,7 @@ class WhisperModelManager: ObservableObject {
         }
     }
 
-    /// Downloads the Whisper tiny model. Progress updates are published.
+    /// Downloads the selected Whisper model variant. Progress updates are published.
     func downloadModel() async {
         guard case .notDownloaded = state else { return }
 
@@ -65,8 +130,8 @@ class WhisperModelManager: ObservableObject {
 
         do {
             let modelFolder = try await WhisperKit.download(
-                variant: Self.modelVariant,
-                downloadBase: Self.modelDirectory,
+                variant: selectedVariant.whisperKitVariant,
+                downloadBase: modelDirectory,
                 progressCallback: { [weak self] progress in
                     Task { @MainActor [weak self] in
                         self?.state = .downloading(progress: progress.fractionCompleted)
@@ -74,8 +139,8 @@ class WhisperModelManager: ObservableObject {
                 }
             )
 
-            // Store the path for later
-            UserDefaults.standard.set(modelFolder.path, forKey: "whisperModelPath")
+            // Store the path for this variant
+            UserDefaults.standard.set(modelFolder.path, forKey: modelPathKey)
             state = .downloaded
         } catch {
             state = .error("Download failed: \(error.localizedDescription)")
@@ -91,17 +156,17 @@ class WhisperModelManager: ObservableObject {
         state = .loading
 
         // Try stored path first
-        let modelPath: String? = UserDefaults.standard.string(forKey: "whisperModelPath")
+        let modelPath: String? = UserDefaults.standard.string(forKey: modelPathKey)
 
         let config = WhisperKitConfig(
-            model: Self.modelVariant,
-            downloadBase: Self.modelDirectory,
+            model: selectedVariant.whisperKitVariant,
+            downloadBase: modelDirectory,
             modelFolder: modelPath,
             verbose: false,
             logLevel: .none,
             prewarm: true,
             load: true,
-            download: modelPath == nil // download if we don't have a stored path
+            download: modelPath == nil
         )
 
         let kit = try await WhisperKit(config)
@@ -110,28 +175,31 @@ class WhisperModelManager: ObservableObject {
         return kit
     }
 
-    /// Deletes the downloaded model files.
+    /// Deletes the currently selected model's files.
     func deleteModel() {
         whisperKit = nil
-        let modelDir = Self.modelDirectory
-        try? FileManager.default.removeItem(at: modelDir)
-        UserDefaults.standard.removeObject(forKey: "whisperModelPath")
+        try? FileManager.default.removeItem(at: modelDirectory)
+        UserDefaults.standard.removeObject(forKey: modelPathKey)
         state = .notDownloaded
     }
 
     /// The cached WhisperKit instance, if loaded.
     var loadedKit: WhisperKit? { whisperKit }
 
-    /// Size of the downloaded model on disk.
+    /// Size of the currently selected model on disk.
     var modelSizeOnDisk: String {
-        let modelDir = Self.modelDirectory
-        guard let size = try? FileManager.default.allocatedSizeOfDirectory(at: modelDir), size > 0 else {
+        guard let size = try? FileManager.default.allocatedSizeOfDirectory(at: modelDirectory), size > 0 else {
             return ""
         }
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(size))
+    }
+
+    /// UserDefaults key for the stored model path, unique per variant.
+    private var modelPathKey: String {
+        "whisperModelPath_\(selectedVariant.rawValue)"
     }
 }
 

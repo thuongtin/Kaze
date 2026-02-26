@@ -31,11 +31,11 @@ struct WaveformView: View {
                     processingSpinner
                 } else {
                     Image("kaze-icon")
+                        .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 16, height: 16)
-                        .colorInvert()
-                        .opacity(0.9)
+                        .foregroundStyle(.white.opacity(0.9))
                         .transition(.opacity)
                 }
 
