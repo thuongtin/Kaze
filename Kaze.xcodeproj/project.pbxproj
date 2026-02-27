@@ -270,6 +270,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Kaze;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Kaze needs microphone access to transcribe your speech.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Kaze uses on-device speech recognition to convert your voice to text.";
@@ -307,6 +309,8 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Kaze;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Kaze needs microphone access to transcribe your speech.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Kaze uses on-device speech recognition to convert your voice to text.";
